@@ -33,16 +33,19 @@ const char ring_pixels[12][2] = {{5,6},
                                  {27,28}};
                                                                   
 
-float display_freq = 0.5*(2*PI);
-float display_amp = 30.0;
-float display_offset = 60.0;
+//settings
+float display_freq = 0.3*(2*PI);
+float display_amp = 20.0;
+float display_offset = 80.0;
 uint32_t ring_bg_color = Adafruit_NeoPixel::Color(0, 10, 40, 0);
-uint32_t ring_fg_color = Adafruit_NeoPixel::Color(0, 90, 70, 0);
-float ring_transition_time = 0.5;
-float ring_effect_time = 3.0;
+uint32_t ring_fg_color = Adafruit_NeoPixel::Color(0, 70, 80, 20);
+float crossfade_time = 0.4;
+float ring_effect_time = 0.5;
 int ring_blink_segments = 3;
 bool ring_chase_direction = true;
 
+//state variables
+static float last_transition_t = 0.0;
 uint32_t display_color;
 uint32_t ring_color[12];
 
@@ -82,8 +85,8 @@ void displayPoll() {
 }
 
 void ringPoll() {
-  static float last_transition_t = 0.0;
   static char current_position = 0;
+  static char last_position = 0;
 
   //initialize everything to the background color, unless this is in manual mode
   if (mode!=MODE_MANUAL)
@@ -95,14 +98,19 @@ void ringPoll() {
 		break;
     case MODE_CHASE:
 		if ((t - last_transition_t) > ring_effect_time) {
+			last_transition_t = t;
+			last_position = current_position;
+
 			//move on to next segment
 			if (ring_chase_direction)
-				current_position = current_position>11 ? 0 : current_position + 1;
+				current_position = current_position>=11 ? 0 : current_position + 1;
 			else
-				current_position = current_position<0 ? 11 : current_position - 1;
-			last_transition_t = t;
+				current_position = current_position<=0 ? 11 : current_position - 1;
 		}
-		ring_color[current_position] = ring_fg_color;
+		crossfade(ring_fg_color, ring_bg_color, &ring_color[last_position], &ring_color[current_position]);
+
+		//ring_color[current_position] = ring_fg_color;
+
 		break;
     case MODE_BLINK:
 
@@ -119,7 +127,49 @@ void ringPoll() {
 	  }
 }
 
+void crossfade(uint32_t to_color, uint32_t from_color, uint32_t* backward, uint32_t* foreward)
+{
+	float t_c = (t - last_transition_t);
 
+	if (t_c < crossfade_time) {
+		uint8_t r0, g0, b0, w0;
+		uint8_t r1, g1, b1, w1;
+		uint8_t rf, gf, bf, wf;
+		uint8_t rb, gb, bb, wb;
+
+		colorToRGBW(from_color, &r0, &g0, &b0, &w0);
+		colorToRGBW(to_color, &r1, &g1, &b1, &w1);
+
+		float progress = t_c / crossfade_time;
+		rf = r0 + (r1 - r0)*progress;
+		gf = g0 + (g1 - g0)*progress;
+		bf = b0 + (b1 - b0)*progress;
+		wf = w0 + (w1 - w0)*progress;
+
+		rb = r1 + (r0 - r1)*progress;
+		gb = g1 + (g0 - g1)*progress;
+		bb = b1 + (b0 - b1)*progress;
+		wb = w1 + (w0 - w1)*progress;
+
+		*foreward = Adafruit_NeoPixel::Color(rf,gf,bf,wf);
+		*backward = Adafruit_NeoPixel::Color(rb, gb, bb, wb);
+	}
+	else {
+		*foreward = to_color;
+		*backward = from_color;
+	}
+
+
+}
+
+void colorToRGBW(uint32_t c, uint8_t* r, uint8_t* g, uint8_t* b, uint8_t* w)
+{
+	*w = 0xFF & (c >> 24);
+	*r = 0xFF & (c >> 16);
+	*g = 0xFF & (c >> 8);
+	*b = 0xFF & (c >> 0);
+
+}
 
 void serialPoll()
 {
@@ -168,18 +218,38 @@ void parseCommand() {
 	}
 	else if (strcmp(cmd, "ledringfg") == 0)
 	{
-
+		ring_fg_color = Adafruit_NeoPixel::Color(atoi(params[0]),
+												 atoi(params[1]),
+												 atoi(params[2]),
+												 atoi(params[3]));
 	}
 	else if (strcmp(cmd, "ledringbg") == 0)
 	{
-
+		ring_bg_color = Adafruit_NeoPixel::Color(atoi(params[0]),
+												 atoi(params[1]),
+												 atoi(params[2]),
+												 atoi(params[3]));
 	}
-	if (strcmp(cmd, "ledringparams") == 0)
+	else if (strcmp(cmd, "ledringparams") == 0)
 	{
 		ring_effect_time = atof(params[0]);
-		ring_transition_time = atof(params[1]);
+		crossfade_time = atof(params[1]);
 		ring_blink_segments = atoi(params[2]);
 		ring_chase_direction = atoi(params[3]);
+	}
+	else if (strcmp(cmd, "ledset") == 0)
+	{
+		int idx = atoi(params[0]);
+		if (idx == 0)
+			display_color = Adafruit_NeoPixel::Color(atoi(params[1]),
+													 atoi(params[2]),
+													 atoi(params[3]),
+													 atoi(params[4]));
+		else
+			ring_color[idx-1] = Adafruit_NeoPixel::Color(atoi(params[1]),
+				atoi(params[2]),
+				atoi(params[3]),
+				atoi(params[4]));
 
 	}
 }
