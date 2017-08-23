@@ -2,11 +2,12 @@
 
 //SERIAL I/O
 #define CMD_DELIM '\n'
+#define CMD_PAUSE_PIXELS '#'
 #define MAX_CMD_LENGTH 200
 char uart_buffer[MAX_CMD_LENGTH + 1];
 uint16_t buffer_pos = 0;
 
-#define PIXEL_COUNT 30
+#define PIXEL_COUNT 150
 
 #define LED_PIN 3
 
@@ -18,8 +19,8 @@ uint16_t buffer_pos = 0;
 
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(PIXEL_COUNT, LED_PIN, NEO_GRBW + NEO_KHZ800);
 
-const char display_pixels[] = {0,4};
-const char ring_pixels[12][2] = {{5,6},
+const uint16_t display_pixels[] = {0,4};
+const uint16_t ring_pixels[12][2] = {{5,6},
                                  {7,8},
                                  {9,10},
                                  {11,12},
@@ -30,11 +31,11 @@ const char ring_pixels[12][2] = {{5,6},
                                  {21,22},
                                  {23,24},
                                  {25,26},
-                                 {27,28}};
+                                 {27,149}};
                                                                   
 
 //settings
-float display_freq = 0.3*(2*PI);
+float display_freq = 0.3;
 float display_amp = 20.0;
 float display_offset = 80.0;
 uint32_t ring_bg_color = Adafruit_NeoPixel::Color(0, 10, 40, 0);
@@ -48,9 +49,8 @@ bool ring_chase_direction = true;
 static float last_transition_t = 0.0;
 uint32_t display_color;
 uint32_t ring_color[12];
-
+bool is_paused;
 float t;
-
 unsigned char mode = MODE_CHASE;
 
 void setup()
@@ -64,20 +64,31 @@ void setup()
 
 void loop()
 {
-	t = millis()/1000.0;
+	//to make pause/play appear seamless, we only increment t if not paused.
+	static uint32_t last_millis = 0;
+	uint32_t current_millis = millis();
+
+	if (!is_paused)
+		t += (current_millis -last_millis)/1000.0;
+	last_millis = current_millis;
+
 	serialPoll();
 	displayPoll();
 	ringPoll();
  
-	pixels.show();
+	//the pause command ('#') must be sent before a string command can be processed
+	if (!is_paused)
+		pixels.show();
 
 }
 
 void displayPoll() {
-  uint8_t w = display_amp*sin(t*display_freq) + display_offset;
-
-  if (mode != MODE_MANUAL)
+  
+  if (mode != MODE_MANUAL) {
+	  //pulse white light as a sin()
+	  uint8_t w = display_amp*sin(t*display_freq*2*PI) + display_offset;
 	  display_color = Adafruit_NeoPixel::Color(0, 0, 0, w);
+  }
 
   for (int i = display_pixels[0]; i<=display_pixels[1]; i++) {
     pixels.setPixelColor(i, display_color);
@@ -85,8 +96,8 @@ void displayPoll() {
 }
 
 void ringPoll() {
-  static char current_position = 0;
-  static char last_position = 0;
+  static uint8_t current_position = 0;
+  static uint8_t last_position = 0;
 
   //initialize everything to the background color, unless this is in manual mode
   if (mode!=MODE_MANUAL)
@@ -95,8 +106,12 @@ void ringPoll() {
 
   switch (mode) { 
     case MODE_SOLID:
+		//all ring LEDs remain @ background color
+
 		break;
     case MODE_CHASE:
+		//foreground color chases around ring
+
 		if ((t - last_transition_t) > ring_effect_time) {
 			last_transition_t = t;
 			last_position = current_position;
@@ -109,13 +124,13 @@ void ringPoll() {
 		}
 		crossfade(ring_fg_color, ring_bg_color, &ring_color[last_position], &ring_color[current_position]);
 
-		//ring_color[current_position] = ring_fg_color;
-
 		break;
     case MODE_BLINK:
+		//random blinks of N panels at a time
 
 		break;
     case MODE_RAINBOW:
+		//cycle through a color palette
 
 		break;
   }
@@ -176,9 +191,11 @@ void serialPoll()
 	//TODO: move to interrupt
 	char new_char = 0;
 	while (Serial.available() > 0) {
-		
 		new_char = (char)Serial.read();
-		if (new_char == CMD_DELIM) {
+		if (new_char == CMD_PAUSE_PIXELS) {
+			is_paused = !is_paused;
+		}
+		else if (new_char == CMD_DELIM) {
 			//a complete command has been received, so act on it
 			parseCommand();
 			buffer_pos = 0;
@@ -193,17 +210,12 @@ void serialPoll()
 
 void parseCommand() {
 	Serial.println(uart_buffer);
-
 	Serial.println("parsing");
+  
 	char* cmd = strtok(uart_buffer, " ");
 	char* params[10];
 	for (int i = 0; i < 10; i++)
 		params[i] = strtok(NULL, " ");
-	
-	Serial.println(cmd);
-	Serial.println(params[0]);
-	Serial.println(params[1]);
-	Serial.println(params[2]);
 
 	if (strcmp(cmd, "leddispparams") == 0)
 	{
