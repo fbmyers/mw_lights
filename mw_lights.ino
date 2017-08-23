@@ -209,47 +209,52 @@ void serialPoll()
 }
 
 void parseCommand() {
-	Serial.println(uart_buffer);
-	Serial.println("parsing");
-  
-	char* cmd = strtok(uart_buffer, " ");
+	char* prefix = strtok(uart_buffer, " ");
+	char* cmd = strtok(NULL, " ");
 	char* params[10];
 	for (int i = 0; i < 10; i++)
 		params[i] = strtok(NULL, " ");
 
-	if (strcmp(cmd, "leddispparams") == 0)
+	//all commands coming form mamaduino should start with "led"
+	if (strcmp(prefix, "led") != 0)
+	{
+		Serial.println("Invalid Command");
+		return;
+	}
+
+	if (strcmp(cmd, "dispparams") == 0)
 	{
 		display_amp = atof(params[0]);
 		display_freq = atof(params[1]);
 		display_offset = atof(params[2]);
 
 	}
-	else if (strcmp(cmd, "ledmode") == 0)
+	else if (strcmp(cmd, "mode") == 0)
 	{
 		mode = atoi(params[0]);
 	}
-	else if (strcmp(cmd, "ledringfg") == 0)
+	else if (strcmp(cmd, "ringfg") == 0)
 	{
 		ring_fg_color = Adafruit_NeoPixel::Color(atoi(params[0]),
 												 atoi(params[1]),
 												 atoi(params[2]),
 												 atoi(params[3]));
 	}
-	else if (strcmp(cmd, "ledringbg") == 0)
+	else if (strcmp(cmd, "ringbg") == 0)
 	{
 		ring_bg_color = Adafruit_NeoPixel::Color(atoi(params[0]),
 												 atoi(params[1]),
 												 atoi(params[2]),
 												 atoi(params[3]));
 	}
-	else if (strcmp(cmd, "ledringparams") == 0)
+	else if (strcmp(cmd, "ringparams") == 0)
 	{
 		ring_effect_time = atof(params[0]);
 		crossfade_time = atof(params[1]);
 		ring_blink_segments = atoi(params[2]);
 		ring_chase_direction = atoi(params[3]);
 	}
-	else if (strcmp(cmd, "ledset") == 0)
+	else if (strcmp(cmd, "set") == 0)
 	{
 		int idx = atoi(params[0]);
 		if (idx == 0)
