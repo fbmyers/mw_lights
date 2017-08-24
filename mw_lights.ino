@@ -1,3 +1,4 @@
+#include "mw_lights.h"
 #include <Adafruit_NeoPixel.h>
 
 //SERIAL I/O
@@ -44,14 +45,17 @@ float crossfade_time = 0.4;
 float ring_effect_time = 0.5;
 int ring_blink_segments = 3;
 bool ring_chase_direction = true;
+char rainbow_saturation = 180;
+char rainbow_value = 20;
 
 //state variables
 static float last_transition_t = 0.0;
 uint32_t display_color;
 uint32_t ring_color[12];
 bool is_paused;
-float t;
+double t;
 unsigned char mode = MODE_CHASE;
+
 
 void setup()
 {
@@ -96,8 +100,10 @@ void displayPoll() {
 }
 
 void ringPoll() {
-  static uint8_t current_position = 0;
-  static uint8_t last_position = 0;
+	static uint8_t current_positions[4] = { 0,0,0,0 };
+	static uint8_t last_positions[4] = { 0,0,0,0 };
+	static HsvColor current_rainbow_color;
+	static bool blink_on;
 
   //initialize everything to the background color, unless this is in manual mode
   if (mode!=MODE_MANUAL)
@@ -114,24 +120,50 @@ void ringPoll() {
 
 		if ((t - last_transition_t) > ring_effect_time) {
 			last_transition_t = t;
-			last_position = current_position;
+			last_positions[0] = current_positions[0];
 
 			//move on to next segment
 			if (ring_chase_direction)
-				current_position = current_position>=11 ? 0 : current_position + 1;
+				current_positions[0] = current_positions[0]>=11 ? 0 : current_positions[0] + 1;
 			else
-				current_position = current_position<=0 ? 11 : current_position - 1;
+				current_positions[0] = current_positions[0]<=0 ? 11 : current_positions[0] - 1;
 		}
-		crossfade(ring_fg_color, ring_bg_color, &ring_color[last_position], &ring_color[current_position]);
+		crossfade(ring_fg_color, ring_bg_color, &ring_color[last_positions[0]], &ring_color[current_positions[0]]);
 
 		break;
     case MODE_BLINK:
 		//random blinks of N panels at a time
+		if ((t - last_transition_t) > ring_effect_time) {
+			last_transition_t = t;
+
+			if (!blink_on) //pick some new segments to turn on
+				for (int i = 0; i < 4; i++)
+					current_positions[i] = random(0, 11);
+		
+			blink_on = !blink_on;
+		}
+
+		uint32_t dummy;
+		if (blink_on) 
+			for (int i = 0; i < ring_blink_segments; i++) //fade in
+				crossfade(ring_fg_color, ring_bg_color, &dummy, &ring_color[current_positions[i]]);
+		else
+			for (int i = 0; i < ring_blink_segments; i++) //fade out
+				crossfade(ring_bg_color, ring_fg_color, &dummy, &ring_color[current_positions[i]]);
 
 		break;
     case MODE_RAINBOW:
 		//cycle through a color palette
-
+		if ((t - last_transition_t) > ring_effect_time) {
+			last_transition_t = t;
+			//take the current fg and bg colors and shift them by +10 hue in HSV space
+			//i'm being very lazy with this...
+			current_rainbow_color.h++;
+			current_rainbow_color.s = rainbow_saturation;
+			current_rainbow_color.v = rainbow_value;
+			RgbColor rgb = HsvToRgb(current_rainbow_color);
+			ring_bg_color = Adafruit_NeoPixel::Color(rgb.r, rgb.g, rgb.b, 0);
+		}
 		break;
   }
 
@@ -253,6 +285,8 @@ void parseCommand() {
 		crossfade_time = atof(params[1]);
 		ring_blink_segments = atoi(params[2]);
 		ring_chase_direction = atoi(params[3]);
+		rainbow_saturation = atoi(params[4]);
+		rainbow_value = atoi(params[5]);
 	}
 	else if (strcmp(cmd, "set") == 0)
 	{
@@ -269,4 +303,88 @@ void parseCommand() {
 				atoi(params[4]));
 
 	}
+}
+
+//i just grabbed these off the internet. could be cleaned up and harmonized w/ existing color representations
+RgbColor HsvToRgb(HsvColor hsv)
+{
+	RgbColor rgb;
+	unsigned char region, remainder, p, q, t;
+
+	if (hsv.s == 0)
+	{
+		rgb.r = hsv.v;
+		rgb.g = hsv.v;
+		rgb.b = hsv.v;
+		return rgb;
+	}
+
+	region = hsv.h / 43;
+	remainder = (hsv.h - (region * 43)) * 6;
+
+	p = (hsv.v * (255 - hsv.s)) >> 8;
+	q = (hsv.v * (255 - ((hsv.s * remainder) >> 8))) >> 8;
+	t = (hsv.v * (255 - ((hsv.s * (255 - remainder)) >> 8))) >> 8;
+
+	switch (region)
+	{
+	case 0:
+		rgb.r = hsv.v; rgb.g = t; rgb.b = p;
+		break;
+	case 1:
+		rgb.r = q; rgb.g = hsv.v; rgb.b = p;
+		break;
+	case 2:
+		rgb.r = p; rgb.g = hsv.v; rgb.b = t;
+		break;
+	case 3:
+		rgb.r = p; rgb.g = q; rgb.b = hsv.v;
+		break;
+	case 4:
+		rgb.r = t; rgb.g = p; rgb.b = hsv.v;
+		break;
+	default:
+		rgb.r = hsv.v; rgb.g = p; rgb.b = q;
+		break;
+	}
+
+	return rgb;
+}
+
+HsvColor RgbToHsv(uint8_t r, uint8_t g, uint8_t b)
+{
+	HsvColor hsv;
+	RgbColor rgb;
+	rgb.r = r;
+	rgb.g = g;
+	rgb.b = b;
+
+	unsigned char rgbMin, rgbMax;
+
+	rgbMin = rgb.r < rgb.g ? (rgb.r < rgb.b ? rgb.r : rgb.b) : (rgb.g < rgb.b ? rgb.g : rgb.b);
+	rgbMax = rgb.r > rgb.g ? (rgb.r > rgb.b ? rgb.r : rgb.b) : (rgb.g > rgb.b ? rgb.g : rgb.b);
+
+	hsv.v = rgbMax;
+	if (hsv.v == 0)
+	{
+		hsv.h = 0;
+		hsv.s = 0;
+		return hsv;
+	}
+
+	hsv.s = 255 * long(rgbMax - rgbMin) / hsv.v;
+	if (hsv.s == 0)
+	{
+		hsv.h = 0;
+		return hsv;
+	}
+
+	if (rgbMax == rgb.r)
+		hsv.h = 0 + 43 * (rgb.g - rgb.b) / (rgbMax - rgbMin);
+	else if (rgbMax == rgb.g)
+		hsv.h = 85 + 43 * (rgb.b - rgb.r) / (rgbMax - rgbMin);
+	else
+		hsv.h = 171 + 43 * (rgb.r - rgb.g) / (rgbMax - rgbMin);
+
+	return hsv;
 }
